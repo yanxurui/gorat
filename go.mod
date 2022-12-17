@@ -1,3 +1,3 @@
-module github.com/maxmcd/tcp-proxy
+module github.com/yanxurui/trojan
 
-go 1.16
+go 1.19

