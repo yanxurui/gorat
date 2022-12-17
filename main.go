@@ -24,72 +24,10 @@ type peer struct {
 
 var peers = make(map[string]*peer)
 
-func IsPeerDisconnected(p *peer) bool {
-    log.Printf("Detect if peer %s is disconnected", p.addr)
-    p.busy = true
-    c := p.conn
-
-    // Set timeout to avoid blocking on read
-    c.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
-    defer func() {
-        p.busy = false
-
-        // Cancel timeout later
-        var zero time.Time
-        defer c.SetReadDeadline(zero)
-    }()
-
-    // If the connection is healthy is healthy, read all bytes available until a timeout is encountered
-    // Otherwise, the conneciton is probably closed
-    tmp := make([]byte, 256)
-    for {
-        n, err := c.Read(tmp)
-        if err != nil {
-            log.Println("Read error:", err)
-            if err, ok := err.(net.Error); ok && err.Timeout() {
-                // Timeout is expected
-                break
-            } else {
-                // Other errors indicate disconnection
-                log.Println(p.addr, "is disconnected")
-                return true
-            }
-        }
-        log.Println("Got", n, "bytes.")
-    }
-
-    return false
-}
-
-func PrintRemotePeers(c net.Conn) map[int]string{
-    n, err := fmt.Fprintf(c, "Please enter the number to connect to a remote client:\n")
-    if err != nil {
-        log.Println("Printing remote peers encountered error", err)
-        return
-    }
-
-    i := 1
-    num_to_addr_mapping := make(map[int]string)
-    for k, v := range peers {
-        if !v.busy && IsPeerDisconnected(v) {
-            // It is safe to delete a key value pair while in a range
-            log.Printf("Remove remote peer %s", k)
-            delete(peers, k)
-            CloseConnection(v.conn)
-            continue
-        }
-        num_to_addr_mapping[i] = k
-        fmt.Fprintf(c, "%d: %s, %s, busy=%t\n", i, k, v.when_connected.Format("2006-01-02 15:04:05"), v.busy)
-        i++
-    }
-    return num_to_addr_mapping
-}
-
 func Copy(closer chan *peer, dst *peer, src *peer) {
     dst_addr := dst.addr
     src_addr := src.addr
     log.Printf("Begin %s<-%s", dst_addr, src_addr)
-    src.busy = true
     // net.Conn implements io.Reader and io.Writer
     bytes_cnt, err := io.Copy(dst.conn, src.conn)
     if err != nil {
@@ -100,7 +38,6 @@ func Copy(closer chan *peer, dst *peer, src *peer) {
             src.conn.SetReadDeadline(time.Time{})
         }
     }
-    src.busy = false
 
     log.Printf("End %s<-%s, %d bytes transferred", dst_addr, src_addr, bytes_cnt)
 
@@ -130,6 +67,7 @@ func Proxy(local_peer *peer, remote_peer *peer) {
     log.Println("Interrupt the other end")
     opposite_peer.conn.SetReadDeadline(time.Now())
     log.Printf("End port forwarding between %s and %s", local_peer_addr, remote_peer_addr)
+    <- closer
 }
 
 func HandleLocal(c net.Conn) {
@@ -158,7 +96,10 @@ func HandleLocal(c net.Conn) {
             if addr, ok := num_to_addr_mapping[i]; ok {
                 if remote_peer, ok := peers[addr]; ok {
                     if !remote_peer.busy {
+                        // local_peer is a struct whereas remote_peer is the pointer of a struct
+                        remote_peer.busy = true
                         Proxy(&local_peer, remote_peer)
+                        remote_peer.busy = false
                     } else {
                         fmt.Fprintf(c, "Sorry. The client you chose is busy now.\n")
                     }
@@ -198,12 +139,78 @@ func IsLocal(c net.Conn) bool {
     return false
 }
 
+func CheckAlive(p *peer) bool {
+    if p.busy {
+        return true
+    }
+    p.busy = true
+    c := p.conn
+    log.Printf("Detect if peer %s is disconnected", p.addr)
+
+    // Set timeout to avoid blocking on read
+    c.SetReadDeadline(time.Now().Add(10 * time.Millisecond))
+    defer func() {
+        p.busy = false
+
+        // Cancel timeout later
+        var zero time.Time
+        defer c.SetReadDeadline(zero)
+    }()
+
+    // If the connection is healthy, read all bytes available until a timeout is encountered
+    // Otherwise, the conneciton is probably closed
+    tmp := make([]byte, 256)
+    for {
+        n, err := c.Read(tmp)
+        if err != nil {
+            log.Println("Read error:", err)
+            if err, ok := err.(net.Error); ok && err.Timeout() {
+                // Timeout is expected
+                break
+            } else {
+                // Other errors indicate disconnection
+                log.Println(p.addr, "is disconnected")
+                return false
+            }
+        }
+        log.Println("Got", n, "bytes.")
+    }
+
+    return true
+}
+
+func CheckAliveForAll() {
+    log.Println("Checking if remote peers are alive...")
+    log.Println("Count of remote peers:", len(peers))
+    for k, v := range peers {
+        if !CheckAlive(v) {
+            // It is safe to delete a key value pair while in a range
+            log.Printf("Remove remote peer %s", k)
+            delete(peers, k)
+            CloseConnection(v.conn)
+        }
+    }
+}
+
+func PrintRemotePeers(c net.Conn) map[int]string{
+    fmt.Fprintf(c, "Please enter the number to connect to a remote client.\n")
+    CheckAliveForAll()
+    i := 1
+    num_to_addr_mapping := make(map[int]string)
+    for k, v := range peers {
+        num_to_addr_mapping[i] = k
+        fmt.Fprintf(c, "%d: %s, %s, busy=%t\n", i, k, v.when_connected.Format("2006-01-02 15:04:05"), v.busy)
+        i++
+    }
+    return num_to_addr_mapping
+}
+
 func CloseConnection(c net.Conn) {
     addr := c.RemoteAddr()
     log.Println("Closing connection", addr)
 
     if err := c.Close(); err != nil {
-        log.Printf("error closing connection %s: %s", addr)
+        log.Printf("Closing connection %s failed with error: %s", addr, err)
     }
 }
 
@@ -215,6 +222,14 @@ func main() {
     if err != nil {
         panic(err)
     }
+
+    ticker := time.NewTicker(60 * time.Second)
+    go func() {
+        for range ticker.C {
+            CheckAliveForAll()
+        }
+    }()
+
     for {
         conn, err := listener.Accept()
         log.Println("New connection", conn.RemoteAddr())
