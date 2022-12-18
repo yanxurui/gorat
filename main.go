@@ -71,7 +71,6 @@ func Proxy(local_peer *peer, remote_peer *peer) {
 }
 
 func HandleLocal(c net.Conn) {
-    defer CloseConnection(c)
     local_peer := peer{
         addr: c.RemoteAddr().String(),
         when_connected: time.Now(),
@@ -92,6 +91,10 @@ func HandleLocal(c net.Conn) {
             continue
         } else if line == "q" {
             break
+        } else if line == "delevate" {
+            log.Println("Delevating to remote peer for test purpose", local_peer_addr)
+            HandleRemote(c)
+            return // avoid closing the connection
         } else if i, err := strconv.Atoi(line); err == nil {
             if addr, ok := num_to_addr_mapping[i]; ok {
                 if remote_peer, ok := peers[addr]; ok {
@@ -110,6 +113,10 @@ func HandleLocal(c net.Conn) {
         }
         num_to_addr_mapping = PrintRemotePeers(c)
     }
+    if err := scanner.Err(); err != nil {
+        log.Println("scanner error:", err)
+    }
+    CloseConnection(c)
 }
 
 func HandleRemote(c net.Conn) {
@@ -241,7 +248,6 @@ func main() {
         if IsLocal(conn) {
             go HandleLocal(conn)
         } else {
-            defer CloseConnection(conn)
             go HandleRemote(conn)
         }
     }
