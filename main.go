@@ -20,6 +20,7 @@ type peer struct {
     when_connected time.Time
     busy bool // This acts like a lock
     local bool
+    dead bool
 }
 
 var peers = make(map[string]*peer)
@@ -30,12 +31,17 @@ func Copy(closer chan *peer, dst *peer, src *peer) {
     log.Printf("Begin %s<-%s", dst_addr, src_addr)
     // net.Conn implements io.Reader and io.Writer
     bytes_cnt, err := io.Copy(dst.conn, src.conn)
+    src.dead = true
+    // if src closed gracefully (call Close for example instead of Ctrl+c), err will be nil
     if err != nil {
         log.Println("error copying data:", err)
         if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
+            // we assume the timeout is caused by the other end quiting
+            // Ddeally, we should check some signal to make sure about this
             log.Println("Timed out. Disable timeout for", src_addr)
             // 0 cancels timeout
             src.conn.SetReadDeadline(time.Time{})
+            src.dead = false
         }
     }
 
@@ -54,6 +60,7 @@ func Proxy(local_peer *peer, remote_peer *peer) {
     go Copy(closer, local_peer, remote_peer)
     log.Println("local -> remote")
     go Copy(closer, remote_peer, local_peer)
+    fmt.Fprintln(local_peer.conn, "Connected!")
     closed_peer := <- closer
     var opposite_peer *peer
     if closed_peer.addr == local_peer.addr {
@@ -68,6 +75,7 @@ func Proxy(local_peer *peer, remote_peer *peer) {
     opposite_peer.conn.SetReadDeadline(time.Now())
     log.Printf("End port forwarding between %s and %s", local_peer_addr, remote_peer_addr)
     <- closer
+    // both io.Copy have ended by now
 }
 
 func HandleLocal(c net.Conn) {
@@ -76,6 +84,7 @@ func HandleLocal(c net.Conn) {
         when_connected: time.Now(),
         busy: false,
         local: true,
+        dead: false,
         conn: c}
     local_peer_addr := local_peer.addr
     log.Println("Handling local peer", local_peer_addr)
@@ -103,6 +112,12 @@ func HandleLocal(c net.Conn) {
                         remote_peer.busy = true
                         Proxy(&local_peer, remote_peer)
                         remote_peer.busy = false
+                        if local_peer.dead {
+                            // Without doing this, the test would have trouble
+                            // no need to run PrintRemotePeers
+                            log.Printf("Local peer %v is dead", local_peer_addr)
+                            continue
+                        }
                     } else {
                         fmt.Fprintf(c, "Sorry. The client you chose is busy now.\n")
                     }
@@ -114,7 +129,7 @@ func HandleLocal(c net.Conn) {
         num_to_addr_mapping = PrintRemotePeers(c)
     }
     if err := scanner.Err(); err != nil {
-        log.Println("scanner error:", err)
+        log.Println("Scanner error:", err)
     }
     CloseConnection(c)
 }
@@ -197,10 +212,15 @@ func CheckAliveForAll() {
             CloseConnection(v.conn)
         }
     }
+    log.Println("Count of remote peers alive:", len(peers))
 }
 
 func PrintRemotePeers(c net.Conn) map[int]string{
-    fmt.Fprintf(c, "Please enter the number to connect to a remote client.\n")
+    _, err := fmt.Fprintf(c, "Please enter the number to connect to a remote client.\n")
+    if err != nil {
+        log.Println("PrintRemotePeers failed:", err)
+        return nil
+    }
     CheckAliveForAll()
     i := 1
     num_to_addr_mapping := make(map[int]string)
@@ -230,7 +250,7 @@ func main() {
         panic(err)
     }
 
-    ticker := time.NewTicker(60 * time.Second)
+    ticker := time.NewTicker(5 * 60 * time.Second)
     go func() {
         for range ticker.C {
             CheckAliveForAll()
@@ -251,4 +271,5 @@ func main() {
             go HandleRemote(conn)
         }
     }
+    log.Println("Quit gracefully")
 }

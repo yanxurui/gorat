@@ -1,3 +1,5 @@
+// Start a command and redirect its stdout & stderr to a channel and a file respectively
+// copied from https://stackoverflow.com/a/69958845/6088837
 package main
 
 import (
@@ -5,7 +7,7 @@ import (
     "context"
     "fmt"
     "io"
-    "log"
+    "os"
     "os/exec"
 )
 
@@ -23,9 +25,14 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
 
     cmd := exec.CommandContext(ctx, command, args...)
 
+    fW, e := os.Create("test.log")
+    if e != nil {
+        panic(e)
+    }
+
     outR, outW := io.Pipe()
+    mw := io.MultiWriter(outW, fW)
     // mw := io.MultiWriter(outW, os.Stdout)
-    mw := io.MultiWriter(outW)
     cmd.Stdout = mw
     cmd.Stderr = mw
 
@@ -43,13 +50,13 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
             lines <- scanner.Text()
         }
         if err := scanner.Err(); err != nil {
-            // TODO: handle error.
+            fmt.Println(err)
         }
     }()
 
     // Start the command.
     if err := cmd.Start(); err != nil {
-        log.Fatal(err)
+        panic(err)
     }
 
     // Goroutine that waits for the command to exit using cmd.Wait().

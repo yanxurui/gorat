@@ -27,7 +27,7 @@ func (c *client) see(keyword string) bool {
     return seeInChannel(c.msgs, keyword)
 }
 
-func (c *client) Close() error {
+func (c *client) close() error {
     return c.conn.Close()
 }
 
@@ -66,6 +66,11 @@ func connect() *client {
         for scanner.Scan() {
             msgs <- scanner.Text()
         }
+        if err := scanner.Err(); err != nil {
+            fmt.Println(err)
+        }
+        close(msgs)
+        fmt.Println("connection closed")
     }()
     return &client{conn: conn, msgs: msgs}
 }
@@ -79,17 +84,88 @@ func connectAsRemote() *client {
     return c
 }
 
+// Validate that a local peer can talk with a remote peer
+func TestPingPong(t *testing.T) {
+    assert := assert.New(t)
+    r := connectAsRemote()
+    defer r.close()
+
+    l := connect()
+    defer l.close()
+    l.send("1")
+    assert.True(l.see("Connected"))
+    l.send("ping")
+    assert.True(r.see("ping"))
+
+    r.send("pong")
+    assert.True(l.see("pong"))
+}
+
+// Validate the remote peer can still be connected when
+// the local peer disconnected
+func TestLocalDisconnected(t *testing.T) {
+    assert := assert.New(t)
+    r1 := connectAsRemote()
+    defer r1.close()
+
+    l := connect()
+    defer l.close()
+    l.send("1")
+    assert.True(l.see("Connected"))
+
+    // r1 disconnected
+    r1.close()
+    seeInLog("Closing connection")
+
+    r2 := connectAsRemote()
+    defer r2.close()
+
+    // l should still be able to connect to r2
+    l.send("l")
+    assert.True(l.see("busy=false"))
+    l.send("1")
+    assert.True(l.see("Connected"))
+}
+
+// Validate a local peer can still connect to other remote
+// peers when the remote peer disconnected
+func TestRemoteDisconnected(t *testing.T) {
+    assert := assert.New(t)
+    r := connectAsRemote()
+    defer r.close()
+
+    // l1 disconnected
+    l1 := connect()
+    defer l1.close()
+    l1.send("1")
+    assert.True(l1.see("Connected"))
+    l1.close()
+    seeInLog("Closing connection")
+
+    // l2 should still be able to connect to r
+    l2 := connect()
+    defer l2.close()
+    assert.True(l2.see("busy=false"))
+    l2.send("1")
+    assert.True(l2.see("Connected"))
+}
+
+// Validate that if a local peer is connected with a remote peer
+// no other local peers can connect to this remote peer
 func TestBusy(t *testing.T) {
     assert := assert.New(t)
     r := connectAsRemote()
-    defer r.Close()
+    defer r.close()
+
     l1 := connect()
-    defer l1.Close()
-    l2 := connect()
-    defer l2.Close()
+    defer l1.close()
     l1.send("1")
+    assert.True(l1.see("Connected"))
+
+    l2 := connect()
+    defer l2.close()
     l2.send("1")
-    assert.True(l2.see("Sorry"))
+    assert.True(l2.see("is busy now"))
 }
 
 func setup() {
@@ -106,7 +182,7 @@ func setup() {
 }
 
 func shutdown() {
-    fmt.Println("shutdown")
+    fmt.Println("Shutdown...")
     // shutdown the server process
     d.Cancel()
     <-d.Done()
