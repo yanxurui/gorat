@@ -1,3 +1,3 @@
-module github.com/yanxurui/trojan
+module github.com/yanxurui/gorat
 
 go 1.19

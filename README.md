@@ -1,5 +1,8 @@
-# Trojan
-A remote access tool written in go.
+# GoRAT
+This is a [remote access trojan](https://www.fortinet.com/resources/cyberglossary/remote-access-trojan) toolset.
+
+* server side is written in go
+* client side is under development
 
 If a victim unintentionally executed the command below, I will have full control over his/her device via a reverse shell.
 
@@ -16,4 +19,4 @@ Remote connections are initiated from the victims' computers by executing `click
 Local connection can list all remote connections and select one of them to run any command in the reverse shell.
 
 ## Client
-As long as the client has internet access and has bash installed, it can be exploited. It's your responsibility to trick the victim into running the shell script.
+As long as the client has internet access and has bash installed, it can be exploited. It's your responsibility to fool the victim into running the shell script.
