@@ -7,6 +7,7 @@ import (
     "io"
     "log"
     "net"
+    "sort"
     "strconv"
     "strings"
     "time"
@@ -90,7 +91,7 @@ func HandleLocal(c net.Conn) {
     log.Println("Handling local peer", local_peer_addr)
     fmt.Fprintln(c, "Hello", local_peer_addr)
     fmt.Fprintln(c, "Type q to quit")
-    num_to_addr_mapping := PrintRemotePeers(c)
+    peers_slice := PrintRemotePeers(c)
     scanner := bufio.NewScanner(c)
     for scanner.Scan() {
         line := scanner.Text()
@@ -105,8 +106,10 @@ func HandleLocal(c net.Conn) {
             HandleRemote(c)
             return // avoid closing the connection
         } else if i, err := strconv.Atoi(line); err == nil {
-            if addr, ok := num_to_addr_mapping[i]; ok {
-                if remote_peer, ok := peers[addr]; ok {
+            i--
+            if i >= 0 && i < len(peers_slice) {
+                remote_peer := peers_slice[i]
+                if _, ok := peers[remote_peer.addr]; ok {
                     if !remote_peer.busy {
                         // local_peer is a struct whereas remote_peer is the pointer of a struct
                         remote_peer.busy = true
@@ -126,7 +129,7 @@ func HandleLocal(c net.Conn) {
                 }
             }
         }
-        num_to_addr_mapping = PrintRemotePeers(c)
+        peers_slice = PrintRemotePeers(c)
     }
     if err := scanner.Err(); err != nil {
         log.Println("Scanner error:", err)
@@ -215,21 +218,29 @@ func CheckAliveForAll() {
     log.Println("Count of remote peers alive:", len(peers))
 }
 
-func PrintRemotePeers(c net.Conn) map[int]string{
+func PrintRemotePeers(c net.Conn) []*peer {
     _, err := fmt.Fprintf(c, "Please enter the number to connect to a remote client.\n")
     if err != nil {
         log.Println("PrintRemotePeers failed:", err)
         return nil
     }
     CheckAliveForAll()
-    i := 1
-    num_to_addr_mapping := make(map[int]string)
-    for k, v := range peers {
-        num_to_addr_mapping[i] = k
-        fmt.Fprintf(c, "%d: %s, %s, busy=%t\n", i, k, v.when_connected.Format("2006-01-02 15:04:05"), v.busy)
-        i++
+
+    // sort by the connected time
+    peers_slice := make([]*peer, 0, len(peers))
+    for _, p := range peers {
+        peers_slice = append(peers_slice, p)
     }
-    return num_to_addr_mapping
+    sort.SliceStable(peers_slice, func(i, j int) bool {
+        left := peers_slice[i].when_connected
+        right := peers_slice[j].when_connected
+        return left.Before(right)
+    })
+
+    for i, p := range peers_slice {
+        fmt.Fprintf(c, "%d: %s, %s, busy=%t\n", i+1, p.addr, p.when_connected.Format("2006-01-02 15:04:05"), p.busy)
+    }
+    return peers_slice
 }
 
 func CloseConnection(c net.Conn) {

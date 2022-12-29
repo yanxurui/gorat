@@ -6,6 +6,7 @@ import (
     "github.com/stretchr/testify/assert"
     "net"
     "os"
+    "regexp"
     "strings"
     "testing"
     "time"
@@ -24,36 +25,56 @@ func (c *client) send(s string) {
 }
 
 func (c *client) see(keyword string) bool {
+    fmt.Println("seen in local chat:")
     return seeInChannel(c.msgs, keyword)
 }
 
-func (c *client) close() error {
-    return c.conn.Close()
+func (c *client) find(keyword string) (string, bool) {
+    fmt.Println("found in local chat:")
+    return filterLine(c.msgs, keyword)
+}
+
+func (c *client) close() {
+    if c != nil && c.conn != nil {
+        c.conn.Close()
+        c.conn = nil
+    }
 }
 
 func seeInLog(keyword string) bool {
+    fmt.Println("seen in server log:")
     return seeInChannel(lines, keyword)
 }
 
 func seeInChannel(ch <-chan string, keyword string) bool {
+    _, seen := filterLine(ch, keyword)
+    return seen
+}
+
+func filterLine(ch <-chan string, keyword string) (string, bool) {
     for {
         // non-blocking channel read with timeout
         select {
-        case line := <-ch:
-            fmt.Println("see:", line)
-            // check if the keyword exists in lines we received
-            if strings.Contains(line, keyword) {
-                return true
+        case line, more := <-ch:
+            if more {
+                fmt.Println("\t", line)
+                // check if the keyword exists in lines we received
+                if strings.Contains(line, keyword) {
+                    return line, true
+                }
+            } else {
+                fmt.Println("channel closed")
+                return "", false
             }
         case <-time.After(3 * time.Second):
             fmt.Printf("Couldn't find %q\n", keyword)
-            return false
+            return "", false
         }
     }
 }
 
 func connect() *client {
-    conn, err := net.Dial("tcp", "127.0.0.1:8090")
+    conn, err := net.Dial("tcp", "127.0.0.1:8091")
     if err != nil {
         fmt.Println("error dialing remote addr", err)
         return nil
@@ -75,7 +96,17 @@ func connect() *client {
     return &client{conn: conn, msgs: msgs}
 }
 
+func connectAsLocal() *client {
+    fmt.Println("connecting as local...")
+    c := connect()
+    if c != nil {
+        seeInLog("Handling local")
+    }
+    return c
+}
+
 func connectAsRemote() *client {
+    fmt.Println("connecting as remote...")
     c := connect()
     if c != nil {
         c.send("delevate")
@@ -90,7 +121,7 @@ func TestPingPong(t *testing.T) {
     r := connectAsRemote()
     defer r.close()
 
-    l := connect()
+    l := connectAsLocal()
     defer l.close()
     l.send("1")
     assert.True(l.see("Connected"))
@@ -101,14 +132,14 @@ func TestPingPong(t *testing.T) {
     assert.True(l.see("pong"))
 }
 
-// Validate the remote peer can still be connected when
-// the local peer disconnected
-func TestLocalDisconnected(t *testing.T) {
+// Validate a local peer can still connect to other remote
+// peers when the remote peer disconnected
+func TestRemoteDisconnected(t *testing.T) {
     assert := assert.New(t)
     r1 := connectAsRemote()
     defer r1.close()
 
-    l := connect()
+    l := connectAsLocal()
     defer l.close()
     l.send("1")
     assert.True(l.see("Connected"))
@@ -127,15 +158,15 @@ func TestLocalDisconnected(t *testing.T) {
     assert.True(l.see("Connected"))
 }
 
-// Validate a local peer can still connect to other remote
-// peers when the remote peer disconnected
-func TestRemoteDisconnected(t *testing.T) {
+// Validate the remote peer can still be connected when
+// the local peer disconnected
+func TestLocalDisconnected(t *testing.T) {
     assert := assert.New(t)
     r := connectAsRemote()
     defer r.close()
 
     // l1 disconnected
-    l1 := connect()
+    l1 := connectAsLocal()
     defer l1.close()
     l1.send("1")
     assert.True(l1.see("Connected"))
@@ -143,7 +174,7 @@ func TestRemoteDisconnected(t *testing.T) {
     seeInLog("Closing connection")
 
     // l2 should still be able to connect to r
-    l2 := connect()
+    l2 := connectAsLocal()
     defer l2.close()
     assert.True(l2.see("busy=false"))
     l2.send("1")
@@ -157,30 +188,58 @@ func TestBusy(t *testing.T) {
     r := connectAsRemote()
     defer r.close()
 
-    l1 := connect()
+    l1 := connectAsLocal()
     defer l1.close()
     l1.send("1")
     assert.True(l1.see("Connected"))
 
-    l2 := connect()
+    l2 := connectAsLocal()
     defer l2.close()
     l2.send("1")
     assert.True(l2.see("is busy now"))
 }
 
+// Validate the printed remote peers are sorted by connected time
+func TestSort(t *testing.T) {
+    assert := assert.New(t)
+    r1 := connectAsRemote()
+    defer r1.close()
+    time.Sleep(1 * time.Second)
+    r2 := connectAsRemote()
+    defer r2.close()
+
+    l := connectAsLocal()
+    defer l.close()
+
+    l1, ok1 := l.find("1: ")
+    assert.True(ok1)
+    l2, ok2 := l.find("2: ")
+    assert.True(ok2)
+    re := regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}`)
+    m1 := re.FindStringSubmatch(l1)
+    assert.NotNil(m1)
+    m2 := re.FindStringSubmatch(l2)
+    assert.NotNil(m1)
+    assert.True(m1[0] < m2[0])
+}
+
+
+// global initialization method
 func setup() {
     fmt.Println("setup")
     // start up the server process
     // go run . will launch a child process to run the main module
     // however, cancel will only kill the parent process
     // lines = d.Start("go", "run", ".")
-    lines = d.Start("./gorat")
+    lines = d.Start("./gorat", "-l", "127.0.0.1:8091")
     if !seeInLog("Listening") {
         shutdown()
         panic("Failed to start the server")
     }
 }
 
+// global cleanup method
+// Todo: this is not run on panic of any test method because m.Run is not returned
 func shutdown() {
     fmt.Println("Shutdown...")
     // shutdown the server process
