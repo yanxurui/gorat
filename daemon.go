@@ -37,8 +37,10 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
     cmd.Stderr = mw
 
     // MultiWriter could be blocked by one of the writters.
+    // As a result, cmd.Wait does not return.
+    // check out this comment: https://github.com/golang/go/issues/10338#issuecomment-115423168
     // Use buffering to prevent MultiWriter from being blocked.
-    lines := make(chan string, 100)
+    lines := make(chan string, 5000)
 
     // Output lines producer goroutine.
     // This goroutine typically exits when there the write
@@ -86,7 +88,7 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
 
 // Done returns a channel, which is closed when the command
 // started by Start exits: either normally, due to a command error,
-// or by due to d.cancel.
+// or due to d.cancel.
 // After the channel is closed, d.CmdErr() returns the error, if any,
 // from the command's exit.
 func (d *Daemon) Done() <-chan struct{} {
