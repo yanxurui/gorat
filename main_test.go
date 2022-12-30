@@ -13,14 +13,11 @@ import (
     "time"
 )
 
-
-var d Daemon
-var lines <-chan string
-
 type client struct {
     conn net.Conn
     msgs <-chan string
     local bool
+    suite *MainTestSuite
 }
 
 func (c *client) send(s string) {
@@ -28,22 +25,23 @@ func (c *client) send(s string) {
 }
 
 func (c *client) see(keyword string) bool {
-    fmt.Println("looking for", keyword, "in local chat:")
-    return seeInChannel(c.msgs, keyword)
+    c.suite.T().Log("looking for", keyword, "in local chat:")
+    _, seen := c.suite.filterLines(c.msgs, keyword)
+    return seen
 }
 
 func (c *client) find(keyword string) (string, bool) {
-    fmt.Println("Find line containing", keyword, "in local chat:")
-    return filterLine(c.msgs, keyword)
+    c.suite.T().Log("Find line containing", keyword, "in local chat:")
+    return c.suite.filterLines(c.msgs, keyword)
 }
 
 func (c *client) close() {
     if c != nil && c.conn != nil {
-        fmt.Println("closing connection...")
+        c.suite.T().Log("closing connection...")
         c.conn.Close()
         c.conn = nil
         if c.local {
-            seeInLog("Closing connection")
+            c.suite.seeInLog("Closing connection")
         } else {
             // server is not aware immediately when the remote peer disconnects
         }
@@ -53,39 +51,46 @@ func (c *client) close() {
 
 type MainTestSuite struct {
     suite.Suite
+    d Daemon
+    lines <-chan string
     clients []*client
 }
 
 // run once before/after the entire test suite
 func (suite *MainTestSuite) SetupSuite() {
-    fmt.Println("SetupSuite...")
+    suite.T().Log("SetupSuite...")
     // start up the server process
-    // go run . will launch a child process to run the main module
+    // `go run .` does not work because it will launch a child process to run the main module
     // however, cancel will only kill the parent process
-    // lines = d.Start("go", "run", ".")
-    lines = d.Start("./gorat", "-l", "127.0.0.1:8091")
-    if !seeInLog("Listening") {
+    // lines = suite.d.Start("go", "run", ".")
+    suite.lines = suite.d.Start("./gorat", "-l", "127.0.0.1:8091")
+    if !suite.seeInLog("Listening") {
         panic("Failed to start the server")
     }
+    go func() {
+        for m := range suite.d.log {
+            suite.T().Log(m)
+        }
+    }()
 }
 
 // Todo: this is not run if any test method panics because m.Run is not returned
 func (suite *MainTestSuite) TearDownSuite() {
-    fmt.Println("TearDownSuite...")
+    suite.T().Log("TearDownSuite...")
     // shutdown the server process
-    d.Cancel()
-    <-d.Done()
-    fmt.Println("d.CmdErr():", d.CmdErr())
+    suite.d.Cancel()
+    <-suite.d.Done()
+    suite.T().Log("CmdErr():", suite.d.CmdErr())
 }
 
 // run before/after each test in the suite
 func (suite *MainTestSuite) SetupTest() {
-    fmt.Println("SetupTest...")
+    suite.T().Log("SetupTest...")
     suite.clients = []*client{}
 }
 
 func (suite *MainTestSuite) TearDownTest() {
-    fmt.Println("TearDownTest...")
+    suite.T().Log("TearDownTest...")
     for _, c := range suite.clients {
         c.close()
     }
@@ -101,7 +106,7 @@ func TestMainTestSuite(t *testing.T) {
 func (suite *MainTestSuite) connect() *client {
     conn, err := net.Dial("tcp", "127.0.0.1:8091")
     if err != nil {
-        fmt.Println("error dialing remote addr", err)
+        suite.T().Fatal("error dialing remote addr", err)
         return nil
     }
 
@@ -113,64 +118,60 @@ func (suite *MainTestSuite) connect() *client {
             msgs <- scanner.Text()
         }
         if err := scanner.Err(); err != nil {
-            fmt.Println(err)
+            suite.T().Log(err)
         }
         close(msgs)
-        fmt.Println("connection closed")
+        suite.T().Log("connection closed")
     }()
-    c := &client{conn: conn, msgs: msgs}
+    c := &client{conn: conn, msgs: msgs, suite: suite}
     suite.clients = append(suite.clients, c)
     return c
 }
 
 func (suite *MainTestSuite) connectAsLocal() *client {
-    fmt.Println("connecting as local...")
+    suite.T().Log("connecting as local...")
     c := suite.connect()
     if c != nil {
-        seeInLog("Handling local")
+        suite.seeInLog("Handling local")
         c.local = true
     }
     return c
 }
 
 func (suite *MainTestSuite) connectAsRemote() *client {
-    fmt.Println("connecting as remote...")
+    suite.T().Log("connecting as remote...")
     c := suite.connect()
     if c != nil {
         c.send("delevate")
-        seeInLog("Handling remote")
+        suite.seeInLog("Handling remote")
         c.local = false
     }
     return c
 }
 
-func seeInLog(keyword string) bool {
-    fmt.Println("looking for", keyword, "in server log:")
-    return seeInChannel(lines, keyword)
-}
-
-func seeInChannel(ch <-chan string, keyword string) bool {
-    _, seen := filterLine(ch, keyword)
+func (suite *MainTestSuite) seeInLog(keyword string) bool {
+    suite.T().Log("looking for", keyword, "in server log:")
+    _, seen := suite.filterLines(suite.lines, keyword)
     return seen
 }
 
-func filterLine(ch <-chan string, keyword string) (string, bool) {
+func (suite *MainTestSuite) filterLines(ch <-chan string, keyword string) (string, bool) {
     for {
         // non-blocking channel read with timeout
         select {
         case line, more := <-ch:
             if more {
-                fmt.Println("\t", line)
+                suite.T().Log("\t", line)
                 // check if the keyword exists in lines we received
                 if strings.Contains(line, keyword) {
                     return line, true
                 }
             } else {
-                fmt.Println("channel closed")
+                suite.T().Log("channel closed")
                 return "", false
             }
         case <-time.After(3 * time.Second):
-            fmt.Printf("Couldn't find %q\n", keyword)
+            suite.T().Logf("Couldn't find %q\n", keyword)
             return "", false
         }
     }
@@ -273,13 +274,14 @@ func (suite *MainTestSuite) TestSort() {
 // Test many remote peers are connecting at the same time
 func (suite *MainTestSuite) TestConcurrentConnections() {
     // suite.T().Skip()
+    t := suite.T()
     N := 10 // only 6 threads when N = 100
-    assert := assert.New(suite.T())
+    assert := assert.New(t)
 
     var wg sync.WaitGroup
     start := time.Now()
     for i := 0; i < N; i++ {
-        fmt.Println("connection #", i+1)
+        suite.T().Log("connection #", i+1)
         wg.Add(1)
         go func() {
             defer wg.Done()
@@ -288,9 +290,7 @@ func (suite *MainTestSuite) TestConcurrentConnections() {
     }
     wg.Wait()
     duration := time.Since(start)
-
-    // Formatted string, such as "2h3m0.5s" or "4.503μs"
-    fmt.Println(duration)
+    suite.T().Log("Time elapsed:", duration)
 
     l := suite.connectAsLocal()
     assert.True(l.see(fmt.Sprintf("%d: ", N)))

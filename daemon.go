@@ -15,6 +15,7 @@ type Daemon struct {
     cancel func()
     doneCh chan struct{}
     cmdErr error
+    log chan string
 }
 
 func (d *Daemon) Start(command string, args ...string) <- chan string {
@@ -22,10 +23,11 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
     d.cancel = cancel
 
     d.doneCh = make(chan struct{})
+    d.log = make(chan string, 100)
 
     cmd := exec.CommandContext(ctx, command, args...)
 
-    fW, e := os.Create("test.log")
+    fW, e := os.Create("command.log")
     if e != nil {
         panic(e)
     }
@@ -52,7 +54,7 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
             lines <- scanner.Text()
         }
         if err := scanner.Err(); err != nil {
-            fmt.Println(err)
+            d.log <- fmt.Sprint(err)
         }
     }()
 
@@ -75,9 +77,9 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
     // * with failure due to a command error; or
     // * with failure due to Context cancelation.
     go func() {
-        fmt.Println("waiting...")
+        d.log <- "waiting..."
         err := cmd.Wait()
-        fmt.Println("command exited; error is:", err)
+        d.log <- fmt.Sprint("command exited; error is:", err)
         _ = outW.Close() // TODO: handle error from Close(); log it maybe.
         d.cmdErr = err
         close(d.doneCh)
@@ -92,7 +94,7 @@ func (d *Daemon) Start(command string, args ...string) <- chan string {
 // After the channel is closed, d.CmdErr() returns the error, if any,
 // from the command's exit.
 func (d *Daemon) Done() <-chan struct{} {
-    fmt.Println("Done")
+    d.log <- "Done"
     return d.doneCh
 }
 
@@ -107,6 +109,6 @@ func (d *Daemon) CmdErr() error {
 // exited either naturally or due to a previous Cancel call,
 // then Cancel has no effect.
 func (d *Daemon) Cancel() {
-    fmt.Println("Cancel")
+    d.log <- "Cancel"
     d.cancel()
 }
