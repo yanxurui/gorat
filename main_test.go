@@ -24,10 +24,11 @@ func (c *client) send(s string) {
     fmt.Fprintln(c.conn, s)
 }
 
-func (c *client) see(keyword string) bool {
-    c.suite.T().Log("looking for", keyword, "in local chat:")
+func (c *client) see(keyword string) {
+    t := c.suite.T()
+    t.Log("looking for", keyword, "in local chat:")
     _, seen := c.suite.filterLines(c.msgs, keyword)
-    return seen
+    assert.True(t, seen)
 }
 
 func (c *client) find(keyword string) (string, bool) {
@@ -181,28 +182,26 @@ func (suite *MainTestSuite) filterLines(ch <-chan string, keyword string) (strin
 // -----TEST METHODS-----
 // Validate that a local peer can talk with a remote peer
 func (suite *MainTestSuite) TestPingPong() {
-    assert := assert.New(suite.T())
     r := suite.connectAsRemote()
 
     l := suite.connectAsLocal()
     l.send("1")
-    assert.True(l.see("Connected"))
+    l.see("Connected")
     l.send("ping")
-    assert.True(r.see("ping"))
+    r.see("ping")
 
     r.send("pong")
-    assert.True(l.see("pong"))
+    l.see("pong")
 }
 
 // Validate a local peer can still connect to other remote
 // peers when the current remote peer disconnected
 func (suite *MainTestSuite) TestRemoteDisconnected() {
-    assert := assert.New(suite.T())
     r1 := suite.connectAsRemote()
 
     l := suite.connectAsLocal()
     l.send("1")
-    assert.True(l.see("Connected"))
+    l.see("Connected")
 
     // r1 disconnected
     r1.close()
@@ -211,44 +210,42 @@ func (suite *MainTestSuite) TestRemoteDisconnected() {
 
     // l should still be able to connect to r2
     l.send("l")
-    assert.True(l.see("busy=false"))
+    l.see("busy=false")
     l.send("1")
-    assert.True(l.see("Connected"))
+    l.see("Connected")
 }
 
 // Validate the remote peer can still be connected by other local peers
 // when some local peer disconnected
 func (suite *MainTestSuite) TestLocalDisconnected() {
-    assert := assert.New(suite.T())
     suite.connectAsRemote()
 
     // l1 disconnected
     l1 := suite.connectAsLocal()
     l1.send("1")
-    assert.True(l1.see("Connected"))
+    l1.see("Connected")
 
     l1.close() // this will wait until 'Closing connection' is seen in the server's log
 
     // l2 should still be able to connect to r
     l2 := suite.connectAsLocal()
-    assert.True(l2.see("busy=false"))
+    l2.see("busy=false")
     l2.send("1")
-    assert.True(l2.see("Connected"))
+    l2.see("Connected")
 }
 
 // Validate that if a local peer is connected with a remote peer
 // no other local peers can connect to this remote peer
 func (suite *MainTestSuite) TestBusy() {
-    assert := assert.New(suite.T())
     suite.connectAsRemote()
 
     l1 := suite.connectAsLocal()
     l1.send("1")
-    assert.True(l1.see("Connected"))
+    l1.see("Connected")
 
     l2 := suite.connectAsLocal()
     l2.send("1")
-    assert.True(l2.see("is busy now"))
+    l2.see("is busy now")
 }
 
 // Validate the remote peers are sorted by connected time
@@ -275,9 +272,7 @@ func (suite *MainTestSuite) TestSort() {
 // Test many remote peers are connecting at the same time
 func (suite *MainTestSuite) TestConcurrentConnections() {
     // suite.T().Skip()
-    t := suite.T()
     N := 10 // only 6 threads when N = 100
-    assert := assert.New(t)
 
     var wg sync.WaitGroup
     start := time.Now()
@@ -294,6 +289,6 @@ func (suite *MainTestSuite) TestConcurrentConnections() {
     suite.T().Log("Time elapsed:", duration)
 
     l := suite.connectAsLocal()
-    assert.True(l.see(fmt.Sprintf("%d: ", N)))
+    l.see(fmt.Sprintf("%d: ", N))
 }
 
