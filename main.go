@@ -139,7 +139,7 @@ func HandleLocal(c net.Conn) {
 
 func HandleRemote(c net.Conn) {
     addr := c.RemoteAddr().String()
-    log.Println("Handle remote peer", addr)
+    log.Println("Handling remote peer", addr)
     peers[addr] = &peer{
         addr: addr,
         when_connected: time.Now(),
