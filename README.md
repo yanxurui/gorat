@@ -31,6 +31,10 @@ As long as the client has internet access and has bash installed, it can be expl
 ### Test
 ```sh
 go test
-go test . -run Dis
-go test . -run TestRemoteDisconnected -v
+go test -v
+# run a specific test
+go test -testify.m TestLocalDisconnected -v
 ```
+
+server log is also redirected to file `command.log`.
+

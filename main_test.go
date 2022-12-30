@@ -38,10 +38,11 @@ func (c *client) find(keyword string) (string, bool) {
 func (c *client) close() {
     if c != nil && c.conn != nil {
         c.suite.T().Log("closing connection...")
+        addr := c.conn.LocalAddr()
         c.conn.Close()
         c.conn = nil
         if c.local {
-            c.suite.seeInLog("Closing connection")
+            c.suite.seeInLog(fmt.Sprint("Closing connection ", addr))
         } else {
             // server is not aware immediately when the remote peer disconnects
         }
